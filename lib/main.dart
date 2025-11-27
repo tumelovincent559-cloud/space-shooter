@@ -1,3 +1,4 @@
+// fixed_space_shooter.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
@@ -9,7 +10,7 @@ void main() {
     DeviceOrientation.portraitUp,
     DeviceOrientation.portraitDown,
   ]);
-  runApp(SpaceShooterApp());
+  runApp(const SpaceShooterApp());
 }
 
 class SpaceShooterApp extends StatelessWidget {
@@ -23,7 +24,7 @@ class SpaceShooterApp extends StatelessWidget {
       theme: ThemeData.dark().copyWith(
         scaffoldBackgroundColor: Colors.black,
       ),
-      home: GameScreen(),
+      home: const GameScreen(),
     );
   }
 }
@@ -62,20 +63,30 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   Set<LogicalKeyboardKey> pressedKeys = {};
 
+  // dynamic screen size (set after layout)
+  double screenWidth = 0;
+  double screenHeight = 0;
+
   @override
-  void initState() {
-    super.initState();
-    initStars();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final Size s = MediaQuery.of(context).size;
+    // set once (or when changed)
+    screenWidth = s.width;
+    screenHeight = s.height;
+    // initialize stars with real screen size if empty
+    if (stars.isEmpty) initStars();
   }
 
   void initStars() {
     stars.clear();
+    final rnd = Random();
     for (int i = 0; i < 100; i++) {
       stars.add(Star(
-        x: Random().nextDouble() * 400,
-        y: Random().nextDouble() * 800,
-        size: Random().nextDouble() * 2 + 1,
-        speed: Random().nextDouble() * 2 + 0.5,
+        x: rnd.nextDouble() * screenWidth,
+        y: rnd.nextDouble() * screenHeight,
+        size: rnd.nextDouble() * 2 + 0.8,
+        speed: rnd.nextDouble() * 2 + 0.2,
       ));
     }
   }
@@ -89,12 +100,19 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       enemiesInWave = 5;
       killStreak = 0;
 
-      player = Player(200, 650);
+      // position player relative to screen
+      final px = (screenWidth / 2) - 20;
+      final py = screenHeight - 120;
+      player = Player(px, py, screenWidth, screenHeight);
+
       bullets.clear();
       enemies.clear();
       particles.clear();
       powerUps.clear();
       boss = null;
+
+      // (re-)create stars for current size
+      initStars();
 
       gameTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
         updateGame();
@@ -112,15 +130,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       // Update bullets
       bullets.removeWhere((b) {
         b.update();
-        return b.y < 0;
+        return b.y + b.height < 0;
       });
 
       // Update stars
       for (var star in stars) {
         star.y += star.speed;
-        if (star.y > 800) {
+        if (star.y > screenHeight) {
           star.y = 0;
-          star.x = Random().nextDouble() * 400;
+          star.x = Random().nextDouble() * screenWidth;
         }
       }
 
@@ -137,7 +155,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             enemiesKilled < enemiesInWave) {
           enemySpawnTimer = 0;
           enemies.add(Enemy(
-            x: Random().nextDouble() * 360,
+            x: Random().nextDouble() * max(1, screenWidth - 40),
             y: -40,
             health: 1 + (wave ~/ 3),
             speed: Random().nextDouble() * 2 + 1 + wave * 0.2,
@@ -155,10 +173,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           if (checkCollision(bullets[i], e)) {
             e.health--;
             bullets.removeAt(i);
-            createExplosion(e.x + 20, e.y + 20, Colors.cyan, 10);
+            createExplosion(
+                e.x + e.width / 2, e.y + e.height / 2, Colors.cyan, 8);
 
             if (e.health <= 0) {
-              createExplosion(e.x + 20, e.y + 20, Colors.red, 20);
+              createExplosion(
+                  e.x + e.width / 2, e.y + e.height / 2, Colors.red, 16);
               score += 10;
               enemiesKilled++;
               killStreak++;
@@ -170,7 +190,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               checkAchievement('score100', 'Centurion', score >= 100);
 
               if (Random().nextDouble() < 0.2) {
-                spawnPowerUp(e.x + 20, e.y + 20);
+                spawnPowerUp(e.x + e.width / 2, e.y + e.height / 2);
               }
 
               return true;
@@ -179,13 +199,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         }
 
         // Check player collision
-        if (checkCollision(player!, e)) {
+        if (checkCollision(player!, e) && !e.isBossBullet) {
           if (player!.shield) {
             player!.shield = false;
-            createExplosion(e.x + 20, e.y + 20, Colors.cyan, 15);
+            createExplosion(
+                e.x + e.width / 2, e.y + e.height / 2, Colors.cyan, 12);
           } else {
             player!.health--;
-            createExplosion(e.x + 20, e.y + 20, Colors.red, 20);
+            createExplosion(
+                e.x + e.width / 2, e.y + e.height / 2, Colors.red, 18);
             screenShake = 10;
 
             if (player!.health <= 0) {
@@ -195,7 +217,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
           return true;
         }
 
-        return e.y > 800;
+        return e.y > screenHeight + 50;
       });
 
       // Update powerups
@@ -204,11 +226,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
         if (checkCollision(player!, p)) {
           applyPowerUp(p.type);
-          createExplosion(p.x + 15, p.y + 15, p.getColor(), 10);
+          createExplosion(
+              p.x + p.width / 2, p.y + p.height / 2, p.getColor(), 8);
           return true;
         }
 
-        return p.y > 800;
+        return p.y > screenHeight + 50;
       });
 
       // Boss logic
@@ -236,11 +259,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
             createExplosion(b.x, b.y, Colors.cyan, 10);
 
             if (boss!.health <= 0) {
-              createExplosion(boss!.x + 60, boss!.y + 40, Colors.purple, 40);
+              createExplosion(boss!.x + boss!.width / 2,
+                  boss!.y + boss!.height / 2, Colors.purple, 40);
               score += 100;
               boss = null;
               enemiesInWave = 5 + wave * 2;
-              spawnPowerUp(200, 400);
+              spawnPowerUp(screenWidth / 2, screenHeight / 2);
               screenShake = 20;
               checkAchievement('boss1', 'Boss Slayer', true);
             }
@@ -276,7 +300,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   void spawnBoss() {
     boss = Boss(
-      x: 100,
+      x: max(20, screenWidth / 2 - 60),
       y: 50,
       health: 50 + wave * 20,
     );
@@ -315,7 +339,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
       case PowerUpType.bomb:
         enemies.clear();
         if (boss != null) boss!.health -= 20;
-        createExplosion(200, 400, Colors.orange, 50);
+        createExplosion(screenWidth / 2, screenHeight / 2, Colors.orange, 50);
         screenShake = 20;
         break;
     }
@@ -365,7 +389,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         if (player!.multiShot == 3) offsetX = (i - 1) * 10;
 
         bullets.add(Bullet(
-          x: player!.x + 20 + offsetX,
+          x: player!.x + (player!.width / 2) - 2 + offsetX,
           y: player!.y,
         ));
       }
@@ -391,6 +415,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    // update screen size in case rotated/resized
+    final Size s = MediaQuery.of(context).size;
+    screenWidth = s.width;
+    screenHeight = s.height;
+
     return Scaffold(
       body: Focus(
         autofocus: true,
@@ -408,34 +437,46 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         },
         child: Stack(
           children: [
-            Container(
-              decoration: const BoxDecoration(
-                gradient: LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  colors: [
-                    Color(0xFF0a0e27),
-                    Color(0xFF1a1a2e),
-                    Color(0xFF16213e)
-                  ],
+            // background + game canvas
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                // simple tap to shoot on mobile
+                if (gameState == GameState.playing) shoot();
+              },
+              child: Container(
+                width: double.infinity,
+                height: double.infinity,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Color(0xFF0a0e27),
+                      Color(0xFF1a1a2e),
+                      Color(0xFF16213e)
+                    ],
+                  ),
                 ),
+                child: gameState == GameState.playing && player != null
+                    ? GameCanvas(
+                        player: player!,
+                        bullets: bullets,
+                        enemies: enemies,
+                        particles: particles,
+                        stars: stars,
+                        powerUps: powerUps,
+                        boss: boss,
+                        score: score,
+                        wave: wave,
+                        killStreak: killStreak,
+                        screenShake: screenShake,
+                      )
+                    : Container(),
               ),
-              child: gameState == GameState.playing
-                  ? GameCanvas(
-                      player: player!,
-                      bullets: bullets,
-                      enemies: enemies,
-                      particles: particles,
-                      stars: stars,
-                      powerUps: powerUps,
-                      boss: boss,
-                      score: score,
-                      wave: wave,
-                      killStreak: killStreak,
-                      screenShake: screenShake,
-                    )
-                  : Container(),
             ),
+
+            // overlays
             if (gameState == GameState.menu)
               MenuOverlay(
                 highScore: highScore,
@@ -496,19 +537,21 @@ class GameCanvas extends StatelessWidget {
         (Random().nextDouble() - 0.5) * screenShake,
         (Random().nextDouble() - 0.5) * screenShake,
       ),
-      child: CustomPaint(
-        size: Size.infinite,
-        painter: GamePainter(
-          player: player,
-          bullets: bullets,
-          enemies: enemies,
-          particles: particles,
-          stars: stars,
-          powerUps: powerUps,
-          boss: boss,
-          score: score,
-          wave: wave,
-          killStreak: killStreak,
+      // SizedBox.expand ensures the painter gets the actual available size
+      child: SizedBox.expand(
+        child: CustomPaint(
+          painter: GamePainter(
+            player: player,
+            bullets: bullets,
+            enemies: enemies,
+            particles: particles,
+            stars: stars,
+            powerUps: powerUps,
+            boss: boss,
+            score: score,
+            wave: wave,
+            killStreak: killStreak,
+          ),
         ),
       ),
     );
@@ -645,7 +688,7 @@ class GamePainter extends CustomPainter {
       );
     }
 
-    // Draw player
+    // Draw player (triangle)
     Path playerPath = Path();
     playerPath.moveTo(player.x + player.width / 2, player.y);
     playerPath.lineTo(player.x, player.y + player.height);
@@ -747,14 +790,7 @@ class MenuOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [
-            Colors.black.withOpacity(0.8),
-            Colors.purple.withOpacity(0.5)
-          ],
-        ),
-      ),
+      color: Colors.black.withOpacity(0.6),
       child: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -766,60 +802,31 @@ class MenuOverlay extends StatelessWidget {
               child: const Text(
                 'SPACE SHOOTER',
                 style: TextStyle(
-                  fontSize: 60,
+                  fontSize: 48,
                   fontWeight: FontWeight.bold,
                   color: Colors.white,
                 ),
               ),
             ),
-            const SizedBox(height: 50),
+            const SizedBox(height: 36),
             ElevatedButton(
               onPressed: onStart,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.purple,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 50, vertical: 20),
+                    const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
                 shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(30)),
               ),
               child: const Text('START GAME',
-                  style: TextStyle(fontSize: 24, color: Colors.white)),
+                  style: TextStyle(fontSize: 20, color: Colors.white)),
             ),
-            const SizedBox(height: 30),
-            const Text('Arrow Keys: Move',
-                style: TextStyle(color: Colors.cyan, fontSize: 18)),
-            const Text('Space: Shoot',
-                style: TextStyle(color: Colors.cyan, fontSize: 18)),
             const SizedBox(height: 20),
+            const Text('Tap: Shoot (mobile)',
+                style: TextStyle(color: Colors.cyan, fontSize: 16)),
+            const SizedBox(height: 10),
             Text('High Score: $highScore',
-                style: const TextStyle(color: Colors.yellow, fontSize: 20)),
-            if (achievements.isNotEmpty) ...[
-              const SizedBox(height: 30),
-              Text('🏆 Achievements (${achievements.length})',
-                  style: const TextStyle(color: Colors.yellow, fontSize: 20)),
-              const SizedBox(height: 10),
-              SizedBox(
-                width: 300,
-                height: 100,
-                child: ListView.builder(
-                  itemCount: achievements.length,
-                  itemBuilder: (context, index) {
-                    return Padding(
-                      padding: const EdgeInsets.all(4.0),
-                      child: Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[800],
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: Text(achievements[index],
-                            style: const TextStyle(color: Colors.cyan)),
-                      ),
-                    );
-                  },
-                ),
-              ),
-            ],
+                style: const TextStyle(color: Colors.yellow, fontSize: 18)),
           ],
         ),
       ),
@@ -856,41 +863,37 @@ class GameOverOverlay extends StatelessWidget {
           children: [
             const Text('GAME OVER',
                 style: TextStyle(
-                    fontSize: 60,
+                    fontSize: 46,
                     color: Colors.red,
                     fontWeight: FontWeight.bold)),
-            const SizedBox(height: 30),
+            const SizedBox(height: 20),
             Text('Score: $score',
-                style: const TextStyle(fontSize: 30, color: Colors.white)),
+                style: const TextStyle(fontSize: 24, color: Colors.white)),
             Text('Wave: $wave',
-                style: const TextStyle(fontSize: 25, color: Colors.cyan)),
+                style: const TextStyle(fontSize: 20, color: Colors.cyan)),
             Text('High Score: $highScore',
-                style: const TextStyle(fontSize: 25, color: Colors.yellow)),
-            if (achievements.isNotEmpty)
-              Text(
-                  '🏆 ${achievements.length} Achievement${achievements.length != 1 ? 's' : ''}',
-                  style: const TextStyle(fontSize: 20, color: Colors.purple)),
-            const SizedBox(height: 40),
+                style: const TextStyle(fontSize: 20, color: Colors.yellow)),
+            const SizedBox(height: 20),
             ElevatedButton(
               onPressed: onRestart,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.green,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                    const EdgeInsets.symmetric(horizontal: 36, vertical: 12),
               ),
               child: const Text('PLAY AGAIN',
-                  style: TextStyle(fontSize: 24, color: Colors.white)),
+                  style: TextStyle(fontSize: 18, color: Colors.white)),
             ),
-            const SizedBox(height: 15),
+            const SizedBox(height: 8),
             ElevatedButton(
               onPressed: onMenu,
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey[700],
+                backgroundColor: Colors.grey,
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 40, vertical: 15),
+                    const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
               ),
               child: const Text('MAIN MENU',
-                  style: TextStyle(fontSize: 20, color: Colors.white)),
+                  style: TextStyle(fontSize: 16, color: Colors.white)),
             ),
           ],
         ),
@@ -911,7 +914,7 @@ class AchievementNotification extends StatelessWidget {
       top: 50,
       right: 20,
       child: Container(
-        padding: const EdgeInsets.all(15),
+        padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           gradient:
               const LinearGradient(colors: [Colors.yellow, Colors.orange]),
@@ -924,7 +927,7 @@ class AchievementNotification extends StatelessWidget {
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             Text(text,
                 style:
-                    const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
           ],
         ),
       ),
@@ -953,13 +956,24 @@ class Player extends GameObject {
   bool rapidFire = false;
   double speed = 8;
 
-  Player(double x, double y) : super(x, y, 40, 40);
+  // provide screen bounds to clamp movement
+  double screenWidth;
+  double screenHeight;
+
+  Player(double x, double y, this.screenWidth, this.screenHeight)
+      : super(x, y, 40, 40);
 
   void update(Set<LogicalKeyboardKey> keys) {
     if (keys.contains(LogicalKeyboardKey.arrowLeft) && x > 0) x -= speed;
-    if (keys.contains(LogicalKeyboardKey.arrowRight) && x < 360) x += speed;
+    if (keys.contains(LogicalKeyboardKey.arrowRight) && x < screenWidth - width)
+      x += speed;
     if (keys.contains(LogicalKeyboardKey.arrowUp) && y > 0) y -= speed;
-    if (keys.contains(LogicalKeyboardKey.arrowDown) && y < 760) y += speed;
+    if (keys.contains(LogicalKeyboardKey.arrowDown) &&
+        y < screenHeight - height) y += speed;
+
+    // ensure within bounds
+    x = x.clamp(0.0, screenWidth - width);
+    y = y.clamp(0.0, screenHeight - height);
 
     if (fireRateTimer > 0) fireRateTimer--;
     if (shield && shieldTime > 0) {
