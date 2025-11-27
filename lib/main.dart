@@ -1,556 +1,423 @@
-// fixed_space_shooter.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'dart:async';
 import 'dart:math';
+import 'dart:async';
 
 void main() {
-  WidgetsFlutterBinding.ensureInitialized();
-  SystemChrome.setPreferredOrientations([
-    DeviceOrientation.portraitUp,
-    DeviceOrientation.portraitDown,
-  ]);
   runApp(const SpaceShooterApp());
 }
 
 class SpaceShooterApp extends StatelessWidget {
-  const SpaceShooterApp({super.key});
+  const SpaceShooterApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Space Shooter',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark().copyWith(
-        scaffoldBackgroundColor: Colors.black,
-      ),
+      theme: ThemeData.dark(),
       home: const GameScreen(),
+      debugShowCheckedModeBanner: false,
     );
   }
 }
 
 class GameScreen extends StatefulWidget {
-  const GameScreen({super.key});
+  const GameScreen({Key? key}) : super(key: key);
 
   @override
-  _GameScreenState createState() => _GameScreenState();
+  State<GameScreen> createState() => _GameScreenState();
 }
 
-class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
-  GameState gameState = GameState.menu;
+class _GameScreenState extends State<GameScreen> {
+  // Player properties
+  double playerX = 0;
+  double playerY = 0;
+  double playerSize = 60;
+
+  // Game state
   int score = 0;
-  int highScore = 0;
   int wave = 1;
-  List<String> achievements = [];
-  String? newAchievement;
+  double health = 100;
+  bool gameStarted = false;
 
-  Player? player;
-  List<Bullet> bullets = [];
+  // Bullets and enemies
+  List<Bullet> playerBullets = [];
   List<Enemy> enemies = [];
-  List<Particle> particles = [];
+  List<Bullet> enemyBullets = [];
+
+  // Stars for background
   List<Star> stars = [];
-  List<PowerUp> powerUps = [];
-  Boss? boss;
 
-  Timer? gameTimer;
-  int enemySpawnTimer = 0;
-  int enemiesInWave = 5;
-  int enemiesKilled = 0;
-  int killStreak = 0;
-  int comboTimer = 0;
-  double screenShake = 0;
-  Set<String> unlockedAchievements = {};
+  // Timers
+  Timer? gameLoop;
+  Timer? enemySpawnTimer;
+  Timer? enemyShootTimer;
 
-  Set<LogicalKeyboardKey> pressedKeys = {};
-
-  // dynamic screen size (set after layout)
-  double screenWidth = 0;
-  double screenHeight = 0;
+  Random random = Random();
 
   @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final Size s = MediaQuery.of(context).size;
-    // set once (or when changed)
-    screenWidth = s.width;
-    screenHeight = s.height;
-    // initialize stars with real screen size if empty
-    if (stars.isEmpty) initStars();
+  void initState() {
+    super.initState();
+    initializeStars();
+    startGame();
   }
 
-  void initStars() {
-    stars.clear();
-    final rnd = Random();
-    for (int i = 0; i < 100; i++) {
-      stars.add(Star(
-        x: rnd.nextDouble() * screenWidth,
-        y: rnd.nextDouble() * screenHeight,
-        size: rnd.nextDouble() * 2 + 0.8,
-        speed: rnd.nextDouble() * 2 + 0.2,
-      ));
-    }
+  void initializeStars() {
+    stars = List.generate(
+        50,
+        (index) => Star(
+              x: random.nextDouble() * 400 - 200,
+              y: random.nextDouble() * 800 - 400,
+              size: random.nextDouble() * 2 + 1,
+            ));
   }
 
   void startGame() {
-    setState(() {
-      gameState = GameState.playing;
-      score = 0;
-      wave = 1;
-      enemiesKilled = 0;
-      enemiesInWave = 5;
-      killStreak = 0;
+    gameStarted = true;
 
-      // position player relative to screen
-      final px = (screenWidth / 2) - 20;
-      final py = screenHeight - 120;
-      player = Player(px, py, screenWidth, screenHeight);
+    // Main game loop
+    gameLoop = Timer.periodic(const Duration(milliseconds: 16), (timer) {
+      if (mounted) {
+        setState(() {
+          updateGame();
+        });
+      }
+    });
 
-      bullets.clear();
-      enemies.clear();
-      particles.clear();
-      powerUps.clear();
-      boss = null;
+    // Spawn enemies
+    enemySpawnTimer = Timer.periodic(const Duration(seconds: 2), (timer) {
+      spawnEnemy();
+    });
 
-      // (re-)create stars for current size
-      initStars();
-
-      gameTimer = Timer.periodic(const Duration(milliseconds: 16), (timer) {
-        updateGame();
-      });
+    // Enemies shoot
+    enemyShootTimer =
+        Timer.periodic(const Duration(milliseconds: 1500), (timer) {
+      enemiesShoot();
     });
   }
 
-  void updateGame() {
-    if (gameState != GameState.playing) return;
-
-    setState(() {
-      // Update player
-      player!.update(pressedKeys);
-
-      // Update bullets
-      bullets.removeWhere((b) {
-        b.update();
-        return b.y + b.height < 0;
-      });
-
-      // Update stars
-      for (var star in stars) {
-        star.y += star.speed;
-        if (star.y > screenHeight) {
-          star.y = 0;
-          star.x = Random().nextDouble() * screenWidth;
-        }
-      }
-
-      // Update particles
-      particles.removeWhere((p) {
-        p.update();
-        return p.life <= 0;
-      });
-
-      // Spawn enemies
-      if (boss == null) {
-        enemySpawnTimer++;
-        if (enemySpawnTimer > max(30, 60 - wave * 3) &&
-            enemiesKilled < enemiesInWave) {
-          enemySpawnTimer = 0;
-          enemies.add(Enemy(
-            x: Random().nextDouble() * max(1, screenWidth - 40),
-            y: -40,
-            health: 1 + (wave ~/ 3),
-            speed: Random().nextDouble() * 2 + 1 + wave * 0.2,
-            pattern: Random().nextInt(3),
-          ));
-        }
-      }
-
-      // Update enemies
-      enemies.removeWhere((e) {
-        e.update();
-
-        // Check bullet collision
-        for (int i = bullets.length - 1; i >= 0; i--) {
-          if (checkCollision(bullets[i], e)) {
-            e.health--;
-            bullets.removeAt(i);
-            createExplosion(
-                e.x + e.width / 2, e.y + e.height / 2, Colors.cyan, 8);
-
-            if (e.health <= 0) {
-              createExplosion(
-                  e.x + e.width / 2, e.y + e.height / 2, Colors.red, 16);
-              score += 10;
-              enemiesKilled++;
-              killStreak++;
-              comboTimer = 120;
-
-              checkAchievement('first', 'First Blood', enemiesKilled == 1);
-              checkAchievement('streak5', 'Hot Streak!', killStreak == 5);
-              checkAchievement('streak10', 'Unstoppable!', killStreak == 10);
-              checkAchievement('score100', 'Centurion', score >= 100);
-
-              if (Random().nextDouble() < 0.2) {
-                spawnPowerUp(e.x + e.width / 2, e.y + e.height / 2);
-              }
-
-              return true;
-            }
-          }
-        }
-
-        // Check player collision
-        if (checkCollision(player!, e) && !e.isBossBullet) {
-          if (player!.shield) {
-            player!.shield = false;
-            createExplosion(
-                e.x + e.width / 2, e.y + e.height / 2, Colors.cyan, 12);
-          } else {
-            player!.health--;
-            createExplosion(
-                e.x + e.width / 2, e.y + e.height / 2, Colors.red, 18);
-            screenShake = 10;
-
-            if (player!.health <= 0) {
-              gameOver();
-            }
-          }
-          return true;
-        }
-
-        return e.y > screenHeight + 50;
-      });
-
-      // Update powerups
-      powerUps.removeWhere((p) {
-        p.y += 2;
-
-        if (checkCollision(player!, p)) {
-          applyPowerUp(p.type);
-          createExplosion(
-              p.x + p.width / 2, p.y + p.height / 2, p.getColor(), 8);
-          return true;
-        }
-
-        return p.y > screenHeight + 50;
-      });
-
-      // Boss logic
-      if (boss != null) {
-        boss!.update();
-
-        if (boss!.shootTimer <= 0) {
-          boss!.shootTimer = 60;
-          for (int i = 0; i < 3; i++) {
-            enemies.add(Enemy(
-              x: boss!.x + i * 40,
-              y: boss!.y + 60,
-              health: 1,
-              speed: 4,
-              pattern: 0,
-              isBossBullet: true,
-            ));
-          }
-        }
-
-        // Check bullet collision with boss
-        bullets.removeWhere((b) {
-          if (checkCollision(b, boss!)) {
-            boss!.health--;
-            createExplosion(b.x, b.y, Colors.cyan, 10);
-
-            if (boss!.health <= 0) {
-              createExplosion(boss!.x + boss!.width / 2,
-                  boss!.y + boss!.height / 2, Colors.purple, 40);
-              score += 100;
-              boss = null;
-              enemiesInWave = 5 + wave * 2;
-              spawnPowerUp(screenWidth / 2, screenHeight / 2);
-              screenShake = 20;
-              checkAchievement('boss1', 'Boss Slayer', true);
-            }
-            return true;
-          }
-          return false;
-        });
-      }
-
-      // Wave progression
-      if (boss == null && enemiesKilled >= enemiesInWave && enemies.isEmpty) {
-        wave++;
-        enemiesKilled = 0;
-
-        if (wave % 3 == 0) {
-          spawnBoss();
-        } else {
-          enemiesInWave = 5 + wave * 2;
-        }
-      }
-
-      // Combo timer
-      if (comboTimer > 0) {
-        comboTimer--;
-      } else if (killStreak > 0) {
-        killStreak = 0;
-      }
-
-      // Screen shake
-      if (screenShake > 0) screenShake--;
-    });
-  }
-
-  void spawnBoss() {
-    boss = Boss(
-      x: max(20, screenWidth / 2 - 60),
-      y: 50,
-      health: 50 + wave * 20,
-    );
-  }
-
-  void spawnPowerUp(double x, double y) {
-    powerUps.add(PowerUp(
-      x: x,
-      y: y,
-      type: PowerUpType.values[Random().nextInt(PowerUpType.values.length)],
-    ));
-  }
-
-  void applyPowerUp(PowerUpType type) {
-    switch (type) {
-      case PowerUpType.health:
-        player!.health = min(player!.health + 1, player!.maxHealth);
-        break;
-      case PowerUpType.shield:
-        player!.shield = true;
-        player!.shieldTime = 300;
-        break;
-      case PowerUpType.rapidFire:
-        player!.rapidFire = true;
-        player!.fireRate = 5;
-        Future.delayed(const Duration(seconds: 5), () {
-          if (player != null) {
-            player!.rapidFire = false;
-            player!.fireRate = 10;
-          }
-        });
-        break;
-      case PowerUpType.multiShot:
-        player!.multiShot = min(player!.multiShot + 1, 3);
-        break;
-      case PowerUpType.bomb:
-        enemies.clear();
-        if (boss != null) boss!.health -= 20;
-        createExplosion(screenWidth / 2, screenHeight / 2, Colors.orange, 50);
-        screenShake = 20;
-        break;
-    }
-  }
-
-  void createExplosion(double x, double y, Color color, int count) {
-    for (int i = 0; i < count; i++) {
-      particles.add(Particle(
-        x: x,
-        y: y,
-        vx: (Random().nextDouble() - 0.5) * 6,
-        vy: (Random().nextDouble() - 0.5) * 6,
-        color: color,
-        size: Random().nextDouble() * 3 + 1,
+  void spawnEnemy() {
+    if (enemies.length < 8) {
+      enemies.add(Enemy(
+        x: random.nextDouble() * 300 - 150,
+        y: -400,
+        velocityY: 1 + (wave * 0.2),
+        type: random.nextInt(3),
       ));
     }
   }
 
-  void checkAchievement(String id, String name, bool condition) {
-    if (!unlockedAchievements.contains(id) && condition) {
-      unlockedAchievements.add(id);
-      setState(() {
-        achievements.add(name);
-        newAchievement = name;
-      });
-
-      Future.delayed(const Duration(seconds: 3), () {
-        setState(() {
-          newAchievement = null;
-        });
-      });
+  void enemiesShoot() {
+    for (var enemy in enemies) {
+      if (enemy.y > -300 && enemy.y < 200 && random.nextDouble() > 0.5) {
+        enemyBullets.add(Bullet(
+          x: enemy.x,
+          y: enemy.y,
+          velocityY: 5,
+          isEnemy: true,
+        ));
+      }
     }
   }
 
-  bool checkCollision(GameObject a, GameObject b) {
-    return a.x < b.x + b.width &&
-        a.x + a.width > b.x &&
-        a.y < b.y + b.height &&
-        a.y + a.height > b.y;
+  void updateGame() {
+    // Update stars
+    for (var star in stars) {
+      star.y += star.size * 0.5;
+      if (star.y > 400) {
+        star.y = -400;
+        star.x = random.nextDouble() * 400 - 200;
+      }
+    }
+
+    // Update player bullets
+    playerBullets.removeWhere((bullet) {
+      bullet.y -= bullet.velocityY;
+      return bullet.y < -400;
+    });
+
+    // Update enemy bullets
+    enemyBullets.removeWhere((bullet) {
+      bullet.y += bullet.velocityY;
+
+      // Check collision with player
+      if ((bullet.x - playerX).abs() < playerSize / 2 &&
+          (bullet.y - playerY).abs() < playerSize / 2) {
+        health -= 10;
+        if (health <= 0) {
+          gameOver();
+        }
+        return true;
+      }
+
+      return bullet.y > 400;
+    });
+
+    // Update enemies
+    enemies.removeWhere((enemy) {
+      enemy.y += enemy.velocityY;
+      enemy.x += sin(enemy.y * 0.02) * 2;
+
+      // Check collision with player
+      if ((enemy.x - playerX).abs() < playerSize / 2 &&
+          (enemy.y - playerY).abs() < playerSize / 2) {
+        health -= 20;
+        if (health <= 0) {
+          gameOver();
+        }
+        return true;
+      }
+
+      return enemy.y > 400;
+    });
+
+    // Check bullet-enemy collisions
+    for (var bullet in List.from(playerBullets)) {
+      for (var enemy in List.from(enemies)) {
+        if ((bullet.x - enemy.x).abs() < 30 &&
+            (bullet.y - enemy.y).abs() < 30) {
+          score += 10;
+          playerBullets.remove(bullet);
+          enemies.remove(enemy);
+          break;
+        }
+      }
+    }
+
+    // Check for wave completion
+    if (score > 0 && score % 100 == 0 && enemies.isEmpty) {
+      wave++;
+      health = min(100, health + 20);
+    }
   }
 
   void shoot() {
-    if (player!.fireRateTimer <= 0) {
-      for (int i = 0; i < player!.multiShot; i++) {
-        double offsetX = 0;
-        if (player!.multiShot == 2) offsetX = i == 0 ? -10 : 10;
-        if (player!.multiShot == 3) offsetX = (i - 1) * 10;
-
-        bullets.add(Bullet(
-          x: player!.x + (player!.width / 2) - 2 + offsetX,
-          y: player!.y,
-        ));
-      }
-      player!.fireRateTimer = player!.fireRate;
-    }
+    playerBullets.add(Bullet(
+      x: playerX,
+      y: playerY - playerSize / 2,
+      velocityY: 10,
+      isEnemy: false,
+    ));
   }
 
   void gameOver() {
-    gameTimer?.cancel();
-    if (score > highScore) {
-      highScore = score;
-    }
+    gameLoop?.cancel();
+    enemySpawnTimer?.cancel();
+    enemyShootTimer?.cancel();
+    gameStarted = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Game Over!'),
+        content: Text('Final Score: $score\nWave: $wave'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context);
+              resetGame();
+            },
+            child: const Text('Play Again'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void resetGame() {
     setState(() {
-      gameState = GameState.gameOver;
+      score = 0;
+      wave = 1;
+      health = 100;
+      playerX = 0;
+      playerY = 0;
+      playerBullets.clear();
+      enemyBullets.clear();
+      enemies.clear();
     });
+    startGame();
   }
 
   @override
   void dispose() {
-    gameTimer?.cancel();
+    gameLoop?.cancel();
+    enemySpawnTimer?.cancel();
+    enemyShootTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    // update screen size in case rotated/resized
-    final Size s = MediaQuery.of(context).size;
-    screenWidth = s.width;
-    screenHeight = s.height;
-
     return Scaffold(
-      body: Focus(
-        autofocus: true,
-        onKeyEvent: (node, event) {
-          if (event is KeyDownEvent) {
-            pressedKeys.add(event.logicalKey);
-            if (event.logicalKey == LogicalKeyboardKey.space &&
-                gameState == GameState.playing) {
-              shoot();
-            }
-          } else if (event is KeyUpEvent) {
-            pressedKeys.remove(event.logicalKey);
-          }
-          return KeyEventResult.handled;
+      body: GestureDetector(
+        onPanUpdate: (details) {
+          setState(() {
+            playerX = (details.localPosition.dx -
+                    MediaQuery.of(context).size.width / 2)
+                .clamp(-MediaQuery.of(context).size.width / 2 + playerSize / 2,
+                    MediaQuery.of(context).size.width / 2 - playerSize / 2);
+            playerY = (details.localPosition.dy -
+                    MediaQuery.of(context).size.height / 2)
+                .clamp(-MediaQuery.of(context).size.height / 2 + playerSize / 2,
+                    MediaQuery.of(context).size.height / 2 - playerSize / 2);
+          });
         },
-        child: Stack(
-          children: [
-            // background + game canvas
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                // simple tap to shoot on mobile
-                if (gameState == GameState.playing) shoot();
-              },
-              child: Container(
-                width: double.infinity,
-                height: double.infinity,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [
-                      Color(0xFF0a0e27),
-                      Color(0xFF1a1a2e),
-                      Color(0xFF16213e)
-                    ],
+        onTapDown: (details) {
+          shoot();
+        },
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFF0a0e27), Color(0xFF1a1f3a)],
+            ),
+          ),
+          child: Stack(
+            children: [
+              // Stars
+              ...stars.map((star) => Positioned(
+                    left: MediaQuery.of(context).size.width / 2 + star.x,
+                    top: MediaQuery.of(context).size.height / 2 + star.y,
+                    child: Container(
+                      width: star.size,
+                      height: star.size,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.8),
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                  )),
+
+              // Player bullets
+              ...playerBullets.map((bullet) => Positioned(
+                    left: MediaQuery.of(context).size.width / 2 + bullet.x - 3,
+                    top: MediaQuery.of(context).size.height / 2 + bullet.y - 8,
+                    child: Container(
+                      width: 6,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: Colors.cyan,
+                        borderRadius: BorderRadius.circular(3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.cyan.withOpacity(0.6),
+                            blurRadius: 8,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                    ),
+                  )),
+
+              // Enemy bullets
+              ...enemyBullets.map((bullet) => Positioned(
+                    left: MediaQuery.of(context).size.width / 2 + bullet.x - 3,
+                    top: MediaQuery.of(context).size.height / 2 + bullet.y - 8,
+                    child: Container(
+                      width: 6,
+                      height: 16,
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(3),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.red.withOpacity(0.6),
+                            blurRadius: 8,
+                            spreadRadius: 2,
+                          ),
+                        ],
+                      ),
+                    ),
+                  )),
+
+              // Enemies
+              ...enemies.map((enemy) => Positioned(
+                    left: MediaQuery.of(context).size.width / 2 + enemy.x - 25,
+                    top: MediaQuery.of(context).size.height / 2 + enemy.y - 25,
+                    child: CustomPaint(
+                      size: const Size(50, 50),
+                      painter: EnemyPainter(type: enemy.type),
+                    ),
+                  )),
+
+              // Player
+              Positioned(
+                left: MediaQuery.of(context).size.width / 2 +
+                    playerX -
+                    playerSize / 2,
+                top: MediaQuery.of(context).size.height / 2 +
+                    playerY -
+                    playerSize / 2,
+                child: CustomPaint(
+                  size: Size(playerSize, playerSize),
+                  painter: SpaceshipPainter(),
+                ),
+              ),
+
+              // UI
+              Positioned(
+                top: 40,
+                left: 20,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Score: $score',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Wave: $wave',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    Container(
+                      width: 200,
+                      height: 20,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.white, width: 2),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: LinearProgressIndicator(
+                          value: health / 100,
+                          backgroundColor: Colors.red.shade900,
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            health > 50 ? Colors.green : Colors.red,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              // Instructions
+              if (score == 0 && wave == 1)
+                const Positioned(
+                  bottom: 100,
+                  left: 0,
+                  right: 0,
+                  child: Center(
+                    child: Text(
+                      'Drag to move • Tap to shoot',
+                      style: TextStyle(
+                        color: Colors.white70,
+                        fontSize: 18,
+                      ),
+                    ),
                   ),
                 ),
-                child: gameState == GameState.playing && player != null
-                    ? GameCanvas(
-                        player: player!,
-                        bullets: bullets,
-                        enemies: enemies,
-                        particles: particles,
-                        stars: stars,
-                        powerUps: powerUps,
-                        boss: boss,
-                        score: score,
-                        wave: wave,
-                        killStreak: killStreak,
-                        screenShake: screenShake,
-                      )
-                    : Container(),
-              ),
-            ),
-
-            // overlays
-            if (gameState == GameState.menu)
-              MenuOverlay(
-                highScore: highScore,
-                achievements: achievements,
-                onStart: startGame,
-              ),
-            if (gameState == GameState.gameOver)
-              GameOverOverlay(
-                score: score,
-                wave: wave,
-                highScore: highScore,
-                achievements: achievements,
-                onRestart: startGame,
-                onMenu: () => setState(() => gameState = GameState.menu),
-              ),
-            if (newAchievement != null)
-              AchievementNotification(text: newAchievement!),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Game Canvas Widget
-class GameCanvas extends StatelessWidget {
-  final Player player;
-  final List<Bullet> bullets;
-  final List<Enemy> enemies;
-  final List<Particle> particles;
-  final List<Star> stars;
-  final List<PowerUp> powerUps;
-  final Boss? boss;
-  final int score;
-  final int wave;
-  final int killStreak;
-  final double screenShake;
-
-  const GameCanvas({
-    super.key,
-    required this.player,
-    required this.bullets,
-    required this.enemies,
-    required this.particles,
-    required this.stars,
-    required this.powerUps,
-    this.boss,
-    required this.score,
-    required this.wave,
-    required this.killStreak,
-    required this.screenShake,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Transform.translate(
-      offset: Offset(
-        (Random().nextDouble() - 0.5) * screenShake,
-        (Random().nextDouble() - 0.5) * screenShake,
-      ),
-      // SizedBox.expand ensures the painter gets the actual available size
-      child: SizedBox.expand(
-        child: CustomPaint(
-          painter: GamePainter(
-            player: player,
-            bullets: bullets,
-            enemies: enemies,
-            particles: particles,
-            stars: stars,
-            powerUps: powerUps,
-            boss: boss,
-            score: score,
-            wave: wave,
-            killStreak: killStreak,
+            ],
           ),
         ),
       ),
@@ -558,552 +425,173 @@ class GameCanvas extends StatelessWidget {
   }
 }
 
-// Game Painter
-class GamePainter extends CustomPainter {
-  final Player player;
-  final List<Bullet> bullets;
-  final List<Enemy> enemies;
-  final List<Particle> particles;
-  final List<Star> stars;
-  final List<PowerUp> powerUps;
-  final Boss? boss;
-  final int score;
-  final int wave;
-  final int killStreak;
+// Spaceship painter
+class SpaceshipPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()..style = PaintingStyle.fill;
 
-  GamePainter({
-    required this.player,
-    required this.bullets,
-    required this.enemies,
-    required this.particles,
-    required this.stars,
-    required this.powerUps,
-    this.boss,
-    required this.score,
-    required this.wave,
-    required this.killStreak,
-  });
+    // Main body (gradient)
+    final bodyRect = Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: size.width * 0.6,
+      height: size.height * 0.8,
+    );
+
+    paint.shader = const LinearGradient(
+      colors: [Color(0xFF00d4ff), Color(0xFF0077ff)],
+      begin: Alignment.topCenter,
+      end: Alignment.bottomCenter,
+    ).createShader(bodyRect);
+
+    // Draw ship body
+    final path = Path();
+    path.moveTo(size.width / 2, size.height * 0.1);
+    path.lineTo(size.width * 0.3, size.height * 0.6);
+    path.lineTo(size.width * 0.35, size.height * 0.9);
+    path.lineTo(size.width * 0.65, size.height * 0.9);
+    path.lineTo(size.width * 0.7, size.height * 0.6);
+    path.close();
+    canvas.drawPath(path, paint);
+
+    // Wings
+    paint.shader = null;
+    paint.color = const Color(0xFF0099ff);
+
+    final leftWing = Path();
+    leftWing.moveTo(size.width * 0.3, size.height * 0.5);
+    leftWing.lineTo(size.width * 0.1, size.height * 0.7);
+    leftWing.lineTo(size.width * 0.3, size.height * 0.7);
+    leftWing.close();
+    canvas.drawPath(leftWing, paint);
+
+    final rightWing = Path();
+    rightWing.moveTo(size.width * 0.7, size.height * 0.5);
+    rightWing.lineTo(size.width * 0.9, size.height * 0.7);
+    rightWing.lineTo(size.width * 0.7, size.height * 0.7);
+    rightWing.close();
+    canvas.drawPath(rightWing, paint);
+
+    // Cockpit
+    paint.color = const Color(0xFF00ffff);
+    canvas.drawCircle(
+      Offset(size.width / 2, size.height * 0.35),
+      size.width * 0.15,
+      paint,
+    );
+
+    // Engine glow
+    paint.color = const Color(0xFFff6600);
+    paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 5);
+    canvas.drawOval(
+      Rect.fromCenter(
+        center: Offset(size.width / 2, size.height * 0.92),
+        width: size.width * 0.3,
+        height: size.height * 0.15,
+      ),
+      paint,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
+}
+
+// Enemy painter
+class EnemyPainter extends CustomPainter {
+  final int type;
+  EnemyPainter({required this.type});
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw stars
-    for (var star in stars) {
-      canvas.drawCircle(
-        Offset(star.x, star.y),
-        star.size,
-        Paint()..color = Colors.white.withOpacity(0.8),
-      );
-    }
+    final paint = Paint()..style = PaintingStyle.fill;
 
-    // Draw particles
-    for (var particle in particles) {
-      canvas.drawCircle(
-        Offset(particle.x, particle.y),
-        particle.size,
-        Paint()..color = particle.color.withOpacity(particle.life),
-      );
-    }
+    switch (type) {
+      case 0: // Red triangle enemy
+        paint.color = const Color(0xFFff3333);
+        final path = Path();
+        path.moveTo(size.width / 2, size.height * 0.8);
+        path.lineTo(size.width * 0.2, size.height * 0.2);
+        path.lineTo(size.width * 0.8, size.height * 0.2);
+        path.close();
+        canvas.drawPath(path, paint);
 
-    // Draw power-ups
-    for (var powerUp in powerUps) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(powerUp.x, powerUp.y, powerUp.width, powerUp.height),
-          const Radius.circular(8),
-        ),
-        Paint()
-          ..color = powerUp.getColor()
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-      );
+        paint.color = const Color(0xFFff6666);
+        canvas.drawCircle(Offset(size.width / 2, size.height * 0.4),
+            size.width * 0.15, paint);
+        break;
 
-      TextPainter tp = TextPainter(
-        text: TextSpan(
-          text: powerUp.getIcon(),
-          style: const TextStyle(
-              color: Colors.black, fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      tp.layout();
-      tp.paint(canvas, Offset(powerUp.x + 8, powerUp.y + 5));
-    }
+      case 1: // Purple diamond enemy
+        paint.color = const Color(0xFFaa33ff);
+        final path2 = Path();
+        path2.moveTo(size.width / 2, size.height * 0.1);
+        path2.lineTo(size.width * 0.8, size.height / 2);
+        path2.lineTo(size.width / 2, size.height * 0.9);
+        path2.lineTo(size.width * 0.2, size.height / 2);
+        path2.close();
+        canvas.drawPath(path2, paint);
+        break;
 
-    // Draw bullets
-    for (var bullet in bullets) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(bullet.x, bullet.y, bullet.width, bullet.height),
-          const Radius.circular(4),
-        ),
-        Paint()
-          ..color = Colors.cyan
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-      );
-    }
-
-    // Draw enemies
-    for (var enemy in enemies) {
-      if (enemy.isBossBullet) {
+      case 2: // Orange circle enemy
+        paint.shader = RadialGradient(
+          colors: [const Color(0xFFffaa00), const Color(0xFFff6600)],
+        ).createShader(Rect.fromCircle(
+            center: Offset(size.width / 2, size.height / 2),
+            radius: size.width / 2));
         canvas.drawCircle(
-          Offset(enemy.x, enemy.y),
-          8,
-          Paint()
-            ..color = Colors.purple
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
-        );
-      } else {
-        canvas.drawRRect(
-          RRect.fromRectAndRadius(
-            Rect.fromLTWH(enemy.x, enemy.y, enemy.width, enemy.height),
-            const Radius.circular(5),
-          ),
-          Paint()
-            ..color = enemy.health > 1 ? Colors.orange : Colors.red
-            ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-        );
-      }
+            Offset(size.width / 2, size.height / 2), size.width * 0.4, paint);
+
+        paint.shader = null;
+        paint.color = const Color(0xFFff8800);
+        canvas.drawCircle(Offset(size.width * 0.35, size.height * 0.4),
+            size.width * 0.1, paint);
+        canvas.drawCircle(Offset(size.width * 0.65, size.height * 0.4),
+            size.width * 0.1, paint);
+        break;
     }
 
-    // Draw boss
-    if (boss != null) {
-      canvas.drawRRect(
-        RRect.fromRectAndRadius(
-          Rect.fromLTWH(boss!.x, boss!.y, boss!.width, boss!.height),
-          const Radius.circular(10),
-        ),
-        Paint()
-          ..color = Colors.purple
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15),
-      );
-
-      // Boss health bar
-      canvas.drawRect(
-        Rect.fromLTWH(boss!.x, boss!.y - 10, boss!.width, 5),
-        Paint()..color = Colors.red,
-      );
-      canvas.drawRect(
-        Rect.fromLTWH(boss!.x, boss!.y - 10,
-            boss!.width * (boss!.health / boss!.maxHealth), 5),
-        Paint()..color = Colors.green,
-      );
-    }
-
-    // Draw player (triangle)
-    Path playerPath = Path();
-    playerPath.moveTo(player.x + player.width / 2, player.y);
-    playerPath.lineTo(player.x, player.y + player.height);
-    playerPath.lineTo(
-        player.x + player.width / 2, player.y + player.height - 10);
-    playerPath.lineTo(player.x + player.width, player.y + player.height);
-    playerPath.close();
-
-    canvas.drawPath(
-      playerPath,
-      Paint()
-        ..color = player.rapidFire ? Colors.yellow : Colors.cyan
-        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 15),
-    );
-
-    if (player.shield) {
-      canvas.drawCircle(
-        Offset(player.x + player.width / 2, player.y + player.height / 2),
-        30,
-        Paint()
-          ..color = Colors.cyan.withOpacity(0.3)
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 3
-          ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10),
-      );
-    }
-
-    // Draw UI
-    TextPainter scoreText = TextPainter(
-      text: TextSpan(
-        text: 'Score: $score',
-        style: const TextStyle(
-            color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-    scoreText.layout();
-    scoreText.paint(canvas, const Offset(10, 30));
-
-    TextPainter waveText = TextPainter(
-      text: TextSpan(
-        text: 'Wave: $wave',
-        style: const TextStyle(
-            color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
-      ),
-      textDirection: TextDirection.ltr,
-    );
-    waveText.layout();
-    waveText.paint(canvas, const Offset(10, 60));
-
-    // Health bar
-    canvas.drawRect(
-      const Rect.fromLTWH(10, 90, 150, 20),
-      Paint()..color = Colors.red,
-    );
-    canvas.drawRect(
-      Rect.fromLTWH(10, 90, 150 * (player.health / player.maxHealth), 20),
-      Paint()..color = Colors.green,
-    );
-
-    // Combo
-    if (killStreak > 1) {
-      TextPainter comboText = TextPainter(
-        text: TextSpan(
-          text: '${killStreak}x COMBO!',
-          style: TextStyle(
-            color: killStreak >= 10
-                ? Colors.purple
-                : killStreak >= 5
-                    ? Colors.yellow
-                    : Colors.white,
-            fontSize: 20,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        textDirection: TextDirection.ltr,
-      );
-      comboText.layout();
-      comboText.paint(canvas, Offset(size.width - 150, 30));
-    }
+    // Glow effect
+    paint.maskFilter = const MaskFilter.blur(BlurStyle.normal, 3);
+    paint.color = paint.color.withOpacity(0.3);
+    canvas.drawCircle(
+        Offset(size.width / 2, size.height / 2), size.width * 0.5, paint);
   }
 
   @override
   bool shouldRepaint(covariant CustomPainter oldDelegate) => true;
 }
 
-// Menu Overlay
-class MenuOverlay extends StatelessWidget {
-  final int highScore;
-  final List<String> achievements;
-  final VoidCallback onStart;
+// Game objects
+class Bullet {
+  double x;
+  double y;
+  double velocityY;
+  bool isEnemy;
 
-  const MenuOverlay(
-      {super.key,
-      required this.highScore,
-      required this.achievements,
-      required this.onStart});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black.withOpacity(0.6),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ShaderMask(
-              shaderCallback: (bounds) => const LinearGradient(
-                colors: [Colors.cyan, Colors.purple],
-              ).createShader(bounds),
-              child: const Text(
-                'SPACE SHOOTER',
-                style: TextStyle(
-                  fontSize: 48,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
-                ),
-              ),
-            ),
-            const SizedBox(height: 36),
-            ElevatedButton(
-              onPressed: onStart,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.purple,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 40, vertical: 16),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30)),
-              ),
-              child: const Text('START GAME',
-                  style: TextStyle(fontSize: 20, color: Colors.white)),
-            ),
-            const SizedBox(height: 20),
-            const Text('Tap: Shoot (mobile)',
-                style: TextStyle(color: Colors.cyan, fontSize: 16)),
-            const SizedBox(height: 10),
-            Text('High Score: $highScore',
-                style: const TextStyle(color: Colors.yellow, fontSize: 18)),
-          ],
-        ),
-      ),
-    );
-  }
+  Bullet(
+      {required this.x,
+      required this.y,
+      required this.velocityY,
+      required this.isEnemy});
 }
 
-// Game Over Overlay
-class GameOverOverlay extends StatelessWidget {
-  final int score;
-  final int wave;
-  final int highScore;
-  final List<String> achievements;
-  final VoidCallback onRestart;
-  final VoidCallback onMenu;
+class Enemy {
+  double x;
+  double y;
+  double velocityY;
+  int type;
 
-  const GameOverOverlay({
-    super.key,
-    required this.score,
-    required this.wave,
-    required this.highScore,
-    required this.achievements,
-    required this.onRestart,
-    required this.onMenu,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: Colors.black.withOpacity(0.9),
-      child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Text('GAME OVER',
-                style: TextStyle(
-                    fontSize: 46,
-                    color: Colors.red,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 20),
-            Text('Score: $score',
-                style: const TextStyle(fontSize: 24, color: Colors.white)),
-            Text('Wave: $wave',
-                style: const TextStyle(fontSize: 20, color: Colors.cyan)),
-            Text('High Score: $highScore',
-                style: const TextStyle(fontSize: 20, color: Colors.yellow)),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: onRestart,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 36, vertical: 12),
-              ),
-              child: const Text('PLAY AGAIN',
-                  style: TextStyle(fontSize: 18, color: Colors.white)),
-            ),
-            const SizedBox(height: 8),
-            ElevatedButton(
-              onPressed: onMenu,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.grey,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
-              ),
-              child: const Text('MAIN MENU',
-                  style: TextStyle(fontSize: 16, color: Colors.white)),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Achievement Notification
-class AchievementNotification extends StatelessWidget {
-  final String text;
-
-  const AchievementNotification({super.key, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Positioned(
-      top: 50,
-      right: 20,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          gradient:
-              const LinearGradient(colors: [Colors.yellow, Colors.orange]),
-          borderRadius: BorderRadius.circular(10),
-          boxShadow: const [BoxShadow(color: Colors.orange, blurRadius: 20)],
-        ),
-        child: Column(
-          children: [
-            const Text('🏆 ACHIEVEMENT!',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            Text(text,
-                style:
-                    const TextStyle(fontSize: 14, fontWeight: FontWeight.bold)),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Game Models
-enum GameState { menu, playing, gameOver }
-
-enum PowerUpType { health, shield, rapidFire, multiShot, bomb }
-
-class GameObject {
-  double x, y, width, height;
-  GameObject(this.x, this.y, this.width, this.height);
-}
-
-class Player extends GameObject {
-  int health = 3;
-  int maxHealth = 3;
-  bool shield = false;
-  int shieldTime = 0;
-  int fireRate = 10;
-  int fireRateTimer = 0;
-  int multiShot = 1;
-  bool rapidFire = false;
-  double speed = 8;
-
-  // provide screen bounds to clamp movement
-  double screenWidth;
-  double screenHeight;
-
-  Player(double x, double y, this.screenWidth, this.screenHeight)
-      : super(x, y, 40, 40);
-
-  void update(Set<LogicalKeyboardKey> keys) {
-    if (keys.contains(LogicalKeyboardKey.arrowLeft) && x > 0) x -= speed;
-    if (keys.contains(LogicalKeyboardKey.arrowRight) && x < screenWidth - width)
-      x += speed;
-    if (keys.contains(LogicalKeyboardKey.arrowUp) && y > 0) y -= speed;
-    if (keys.contains(LogicalKeyboardKey.arrowDown) &&
-        y < screenHeight - height) y += speed;
-
-    // ensure within bounds
-    x = x.clamp(0.0, screenWidth - width);
-    y = y.clamp(0.0, screenHeight - height);
-
-    if (fireRateTimer > 0) fireRateTimer--;
-    if (shield && shieldTime > 0) {
-      shieldTime--;
-      if (shieldTime <= 0) shield = false;
-    }
-  }
-}
-
-class Bullet extends GameObject {
-  double speed = 12;
-
-  Bullet({required double x, required double y}) : super(x, y, 4, 15);
-
-  void update() {
-    y -= speed;
-  }
-}
-
-class Enemy extends GameObject {
-  int health;
-  int maxHealth;
-  double speed;
-  int pattern;
-  bool isBossBullet;
-
-  Enemy({
-    required double x,
-    required double y,
-    required this.health,
-    required this.speed,
-    required this.pattern,
-    this.isBossBullet = false,
-  })  : maxHealth = health,
-        super(x, y, 40, 40);
-
-  void update() {
-    if (!isBossBullet) {
-      if (pattern == 1) {
-        x += sin(y * 0.05) * 2;
-      } else if (pattern == 2) {
-        x += cos(y * 0.03) * 3;
-      }
-    }
-    y += speed;
-  }
-}
-
-class Boss extends GameObject {
-  int health;
-  int maxHealth;
-  double speed = 2;
-  int direction = 1;
-  int shootTimer = 60;
-
-  Boss({required double x, required double y, required this.health})
-      : maxHealth = health,
-        super(x, y, 120, 80);
-
-  void update() {
-    x += speed * direction;
-    if (x <= 0 || x >= 280) direction *= -1;
-    shootTimer--;
-  }
-}
-
-class Particle {
-  double x, y, vx, vy, size;
-  Color color;
-  double life = 1.0;
-
-  Particle({
-    required this.x,
-    required this.y,
-    required this.vx,
-    required this.vy,
-    required this.color,
-    required this.size,
-  });
-
-  void update() {
-    x += vx;
-    y += vy;
-    life -= 0.02;
-  }
+  Enemy(
+      {required this.x,
+      required this.y,
+      required this.velocityY,
+      required this.type});
 }
 
 class Star {
-  double x, y, size, speed;
+  double x;
+  double y;
+  double size;
 
-  Star(
-      {required this.x,
-      required this.y,
-      required this.size,
-      required this.speed});
-}
-
-class PowerUp extends GameObject {
-  PowerUpType type;
-
-  PowerUp({required double x, required double y, required this.type})
-      : super(x, y, 30, 30);
-
-  Color getColor() {
-    switch (type) {
-      case PowerUpType.health:
-        return Colors.green;
-      case PowerUpType.shield:
-        return Colors.cyan;
-      case PowerUpType.rapidFire:
-        return Colors.yellow;
-      case PowerUpType.multiShot:
-        return Colors.purple;
-      case PowerUpType.bomb:
-        return Colors.red;
-    }
-  }
-
-  String getIcon() {
-    switch (type) {
-      case PowerUpType.health:
-        return '+';
-      case PowerUpType.shield:
-        return 'S';
-      case PowerUpType.rapidFire:
-        return 'R';
-      case PowerUpType.multiShot:
-        return 'M';
-      case PowerUpType.bomb:
-        return 'B';
-    }
-  }
+  Star({required this.x, required this.y, required this.size});
 }
