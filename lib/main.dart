@@ -1,18 +1,8 @@
-// UPDATED SPACE SHOOTER WITH:
-// ✅ On‑screen joystick + shoot button
-// ✅ Player uses image sprite instead of triangle
-// ✅ DPI‑scaled movement, bullets, enemies, powerups
-// NOTE: Add your player image to: assets/images/player.png
-// And add this in pubspec.yaml:
-// assets:
-//   - assets/images/player.png
-
-// (Full updated code begins below — trimmed comments for clarity)
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:math';
+import 'dart:ui' as ui;
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -46,10 +36,9 @@ class GameScreen extends StatefulWidget {
 class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   GameState gameState = GameState.menu;
 
-  late double dpiScale; // for scaling movement
+  late double dpiScale;
   Player? player;
 
-  // Game lists
   List<Bullet> bullets = [];
   List<Enemy> enemies = [];
   List<Particle> particles = [];
@@ -57,18 +46,15 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   List<PowerUp> powerUps = [];
   Boss? boss;
 
-  // Score
   int score = 0;
   int highScore = 0;
   int wave = 1;
 
-  // Timers
   Timer? loop;
   int spawnTimer = 0;
   int enemiesKilled = 0;
   int enemiesInWave = 5;
 
-  // Touch controls
   double joystickX = 0;
   double joystickY = 0;
   bool isTouchingJoystick = false;
@@ -91,9 +77,11 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     }
   }
 
-  void startGame() {
+  Future<void> startGame() async {
     final size = MediaQuery.of(context).size;
-    dpiScale = size.height / 800; // scale relative to 800px height
+    dpiScale = size.height / 800;
+
+    await loadAssets();
 
     player = Player(size.width / 2 - 20, size.height - 140, dpiScale);
     bullets.clear();
@@ -107,7 +95,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     enemiesKilled = 0;
     enemiesInWave = 5;
 
-    if (loop != null) loop!.cancel();
+    loop?.cancel();
     loop = Timer.periodic(const Duration(milliseconds: 16), (_) => update());
 
     setState(() => gameState = GameState.playing);
@@ -117,17 +105,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     if (gameState != GameState.playing) return;
 
     setState(() {
-      // Move player with touch joystick
       if (isTouchingJoystick) player!.moveFromJoystick(joystickX, joystickY);
-
       player!.update();
-
       if (isPressingShoot) shoot();
 
-      // Move bullets
       bullets.removeWhere((b) => b.update());
 
-      // Move stars
       for (var s in stars) {
         s.y += s.speed;
         if (s.y > 900) {
@@ -136,7 +119,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         }
       }
 
-      // Spawn enemies
       spawnTimer++;
       if (spawnTimer > max(25, 60 - wave * 2) &&
           enemiesKilled < enemiesInWave) {
@@ -144,16 +126,12 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
         enemies.add(Enemy.spawnRandom(dpiScale));
       }
 
-      // Move enemies
       enemies.removeWhere((e) => e.update(player!, bullets, this));
 
-      // Power-ups
       powerUps.removeWhere((p) => p.update(player!, this));
 
-      // Boss
-      if (boss != null) boss!.update(enemies, dpiScale);
+      boss?.update(enemies, dpiScale);
 
-      // Next wave
       if (boss == null && enemiesKilled >= enemiesInWave && enemies.isEmpty) {
         wave++;
         enemiesKilled = 0;
@@ -216,24 +194,22 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
     );
   }
 
-  // On‑screen joystick + shoot button
   Widget buildTouchControls() {
     return Positioned.fill(
       child: Stack(
         children: [
-          // LEFT joystick
           Positioned(
             left: 20,
             bottom: 40,
             child: GestureDetector(
-              onPanStart: (d) => isTouchingJoystick = true,
+              onPanStart: (_) => isTouchingJoystick = true,
               onPanUpdate: (d) {
                 joystickX = (d.localPosition.dx - 40) / 40;
                 joystickY = (d.localPosition.dy - 40) / 40;
                 joystickX = joystickX.clamp(-1, 1);
                 joystickY = joystickY.clamp(-1, 1);
               },
-              onPanEnd: (d) {
+              onPanEnd: (_) {
                 isTouchingJoystick = false;
                 joystickX = joystickY = 0;
               },
@@ -248,8 +224,6 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
               ),
             ),
           ),
-
-          // RIGHT shoot button
           Positioned(
             right: 30,
             bottom: 70,
@@ -277,7 +251,7 @@ class _GameScreenState extends State<GameScreen> with TickerProviderStateMixin {
   }
 }
 
-// ----------------------- GAME OBJECTS -----------------------
+// -------------------- GAME OBJECTS --------------------
 
 enum GameState { menu, playing, gameOver }
 
@@ -286,7 +260,6 @@ abstract class GameObject {
   GameObject(this.x, this.y, this.w, this.h);
 }
 
-// PLAYER uses sprite image
 class Player extends GameObject {
   int hp = 3;
   int fireCooldown = 0;
@@ -346,7 +319,6 @@ class Enemy extends GameObject {
   bool update(Player player, List<Bullet> bullets, _GameScreenState game) {
     y += speed;
 
-    // bullet hits enemy
     for (int i = bullets.length - 1; i >= 0; i--) {
       var b = bullets[i];
       if (rectOverlap(b, this)) {
@@ -360,7 +332,6 @@ class Enemy extends GameObject {
       }
     }
 
-    // enemy hits player
     if (rectOverlap(player, this)) {
       player.hp--;
       if (player.hp <= 0) game.gameOver();
@@ -397,7 +368,25 @@ class Star {
       required this.speed});
 }
 
-class Boss {}
+class Particle {
+  double x, y, size, speed;
+  Particle(
+      {required this.x,
+      required this.y,
+      required this.size,
+      required this.speed});
+  bool update() {
+    y += speed;
+    return y > 1000;
+  }
+}
+
+class Boss {
+  double x = 100, y = -100, w = 80, h = 80;
+  void update(List<Enemy> enemies, double dpi) {
+    y += 1 * dpi;
+  }
+}
 
 bool rectOverlap(GameObject a, GameObject b) {
   return a.x < b.x + b.w &&
@@ -406,7 +395,7 @@ bool rectOverlap(GameObject a, GameObject b) {
       a.h + a.y > b.y;
 }
 
-// ----------------------- CANVAS RENDER -----------------------
+// -------------------- CANVAS --------------------
 
 class GameCanvas extends StatelessWidget {
   final Player player;
@@ -472,22 +461,18 @@ class _Painter extends CustomPainter {
   void paint(Canvas c, Size s) {
     final paint = Paint();
 
-    // Stars
     for (var st in stars) {
       c.drawCircle(Offset(st.x, st.y), st.size, paint..color = Colors.white70);
     }
 
-    // Bullets
     for (var b in bullets) {
       c.drawRect(Rect.fromLTWH(b.x, b.y, b.w, b.h), paint..color = Colors.cyan);
     }
 
-    // Enemies
     for (var e in enemies) {
       c.drawRect(Rect.fromLTWH(e.x, e.y, e.w, e.h), paint..color = Colors.red);
     }
 
-    // Player sprite image
     paint.color = Colors.white;
     c.drawImageRect(
       playerSprite,
@@ -496,7 +481,6 @@ class _Painter extends CustomPainter {
       paint,
     );
 
-    // UI text
     final tp = TextPainter(
       text: TextSpan(
         text: "Score: $score\nWave: $wave",
@@ -512,14 +496,13 @@ class _Painter extends CustomPainter {
   bool shouldRepaint(_) => true;
 }
 
-// Must load sprite globally
-late Image playerSprite;
+// -------------------- LOAD SPRITE --------------------
+
+late ui.Image playerSprite;
+
 Future<void> loadAssets() async {
-  final codec = await PaintingBinding.instance.instantiateImageCodec(
-    await rootBundle
-        .load('assets/images/player.png')
-        .then((d) => d.buffer.asUint8List()),
-  );
+  final bytes = await rootBundle.load('assets/images/player.png');
+  final codec = await ui.instantiateImageCodec(bytes.buffer.asUint8List());
   final frame = await codec.getNextFrame();
   playerSprite = frame.image;
 }
